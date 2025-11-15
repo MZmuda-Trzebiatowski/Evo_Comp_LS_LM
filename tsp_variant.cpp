@@ -1139,7 +1139,7 @@ vector<int> get_greedy_start(int start_node, int k, const vector<vector<int>> &d
     return nn_anypos_regret(start_node, k, d, nodes, 0.5, 0.5);
 }
 
-// ------------------------------------ ASSIGNMENT 4: LIST OF MOVES (LM) ------------------------------------ //
+// ------------------------------------ ASSIGNMENT 5: LIST OF MOVES (LM) ------------------------------------ //
 struct MoveLM {
     int delta;
     int type; // 0: V-E, 2: 2-opt
@@ -1155,25 +1155,18 @@ struct MoveLM {
     }
 };
 
-void update_node_to_pos(const vector<int>& tour, map<int, int>& node_to_pos) {
-    node_to_pos.clear();
-    for (size_t i = 0; i < tour.size(); ++i) {
-        node_to_pos[tour[i]] = i;
-    }
-}
-
-void populate_LM(const vector<int>& tour, const vector<vector<int>>& d, const vector<Node>& nodes, 
-               const vector<bool>& is_selected, map<int, int>& node_to_pos, 
-               vector<MoveLM>& LM) 
+void update_LM(const vector<int>& tour, const vector<vector<int>>& d, const vector<Node>& nodes, 
+               const vector<bool>& is_selected, vector<MoveLM>& LM, int n2) 
 {
-    LM.clear();
-    update_node_to_pos(tour, node_to_pos); // Ensure map is current
     int k = tour.size();
     int n = d.size();
 
-    // 1. V-E
-    for (int i = 0; i < k; ++i) {
-        int n2 = tour[i]; // v_to_remove
+    
+    if (is_selected[n2])
+    {
+        // 1. V-E
+        auto it = find(tour.begin(), tour.end(), n2);
+        int i = distance(tour.begin(), it);
         int n1 = tour[(i + k - 1) % k]; // prev
         int n3 = tour[(i + 1) % k]; // next
         
@@ -1188,10 +1181,8 @@ void populate_LM(const vector<int>& tour, const vector<vector<int>>& d, const ve
                 LM.push_back({delta, 0, n1, n2, n3, n4});
             }
         }
-    }
 
-    // 2. 2-Opt
-    for (int i = 0; i < k; ++i) {
+        // 2. 2-Opt
         for (int j = i + 1; j < k; ++j) {
             
             int delta = delta_2opt(tour, i, j, d);
@@ -1206,7 +1197,7 @@ void populate_LM(const vector<int>& tour, const vector<vector<int>>& d, const ve
                 LM.push_back({delta, 2, n1, n2, n3, n4});
             }
         }
-    }
+    }      
 }
 
 vector<int> local_search_steepest_LM(vector<int> tour, const vector<vector<int>> &d, const vector<Node> &nodes)
@@ -1216,19 +1207,16 @@ vector<int> local_search_steepest_LM(vector<int> tour, const vector<vector<int>>
     vector<bool> is_selected(n, false);
     for(int v : tour) is_selected[v] = true;
     
-    map<int, int> node_to_pos;
     vector<MoveLM> LM;
 
-    // Initial population
-    populate_LM(tour, d, nodes, is_selected, node_to_pos, LM);
+    unordered_set<int> affected_nodes(tour.begin(), tour.end());
 
     while (true) 
     {
-        if (LM.empty()) {
-            break; // No more improving moves found
+        for(int node: affected_nodes) {
+            update_LM(tour, d, nodes, is_selected, LM, node);
         }
-
-        // Sort to find the steepest move
+        affected_nodes.clear();
         sort(LM.begin(), LM.end());
         
         bool applied_move_this_iteration = false;
@@ -1249,19 +1237,18 @@ vector<int> local_search_steepest_LM(vector<int> tour, const vector<vector<int>>
             // --- Validate Move ---
             if (m.type == 0) // V-E Move
             {
-                auto it_n2 = node_to_pos.find(m.n2); // Find node to remove
-
                 // Rule C: node-to-unselect is no longer in tour
-                if (it_n2 == node_to_pos.end()) {
+                if (!is_selected[m.n2]) {
                     permanently_invalid = true;
-                } 
-                // Logical Rule: node-to-add is already in tour
+                } // Logical Rule: node-to-add is already in tour
                 else if (is_selected[m.n4]) {
                     permanently_invalid = true;
                 }
                 else {
                     // Check if neighbors are the same
-                    int idx = it_n2->second;
+                    // Find node to remove
+                    auto it = find(tour.begin(), tour.end(), m.n2);
+                    int idx = distance(tour.begin(), it);
                     if (tour[(idx + k - 1) % k] == m.n1 && tour[(idx + 1) % k] == m.n3) {
                         applicable = true;
                         apply_case = 1;
@@ -1272,40 +1259,38 @@ vector<int> local_search_steepest_LM(vector<int> tour, const vector<vector<int>>
             }
             else if (m.type == 2) // 2-Opt Move
             {
-                auto it_n1 = node_to_pos.find(m.n1);
-                auto it_n2 = node_to_pos.find(m.n2);
-                auto it_n3 = node_to_pos.find(m.n3);
-                auto it_n4 = node_to_pos.find(m.n4);
-
                 // Rule: One of the nodes isn't even in the tour
-                if (it_n1 == node_to_pos.end() || it_n2 == node_to_pos.end() || 
-                    it_n3 == node_to_pos.end() || it_n4 == node_to_pos.end()) {
+                if (!is_selected[m.n1] || !is_selected[m.n2] || 
+                    !is_selected[m.n3] || !is_selected[m.n4]) {
                     permanently_invalid = true;
                 }
                 else {
-                    int i_pos = it_n1->second;
-                    int j_pos = it_n3->second;
+                    auto it = find(tour.begin(), tour.end(), m.n1);
+                    int idx = distance(tour.begin(), it);
+
+                    auto jt = find(tour.begin(), tour.end(), m.n3);
+                    int jdx = distance(tour.begin(), jt);
 
                     // Case 1: Same relative direction (fwd/fwd)
-                    if (tour[(i_pos + 1) % k] == m.n2 && tour[(j_pos + 1) % k] == m.n4) {
+                    if (tour[(idx + 1) % k] == m.n2 && tour[(jdx + 1) % k] == m.n4) {
                         applicable = true;
                         apply_case = 2;
-                        i_idx = i_pos;
-                        j_idx = j_pos;
+                        i_idx = idx;
+                        j_idx = jdx;
                     }
                     // Case 2: Both reversed (rev/rev)
-                    else if (tour[(i_pos + k - 1) % k] == m.n2 && tour[(j_pos + k - 1) % k] == m.n4) {
+                    else if (tour[(idx + k - 1) % k] == m.n2 && tour[(jdx + k - 1) % k] == m.n4) {
                         applicable = true;
                         apply_case = 3;
-                        i_idx = (i_pos + k - 1) % k; // Apply to i-1, j-1
-                        j_idx = (j_pos + k - 1) % k;
+                        i_idx = (idx + k - 1) % k; // Apply to i-1, j-1
+                        j_idx = (jdx + k - 1) % k;
                     }
                     // Rule B: Check if edge (n1,n2) or (n2,n1) is broken
-                    else if (tour[(i_pos + 1) % k] != m.n2 && tour[(i_pos + k - 1) % k] != m.n2) {
+                    else if (tour[(idx + 1) % k] != m.n2 && tour[(idx + k - 1) % k] != m.n2) {
                         permanently_invalid = true;
                     }
                     // Rule B: Check if edge (n3,n4) or (n4,n3) is broken
-                    else if (tour[(j_pos + 1) % k] != m.n4 && tour[(j_pos + k - 1) % k] != m.n4) {
+                    else if (tour[(jdx + 1) % k] != m.n4 && tour[(jdx + k - 1) % k] != m.n4) {
                         permanently_invalid = true;
                     }
                     // else: temporarily invalid (e.g., mixed directions), leave in LM
@@ -1327,23 +1312,21 @@ vector<int> local_search_steepest_LM(vector<int> tour, const vector<vector<int>>
                     apply_2opt(tour, i_idx, j_idx);
                 }
 
-                update_node_to_pos(tour, node_to_pos); // Update map for next validation
                 LM.erase(LM.begin() + i); // Rule A: Remove if applied
+
+                affected_nodes.insert(m.n1);
+                affected_nodes.insert(m.n2);
+                affected_nodes.insert(m.n3);
+                affected_nodes.insert(m.n4);
+               
                 --i; // Adjust loop counter after erase
                 applied_move_this_iteration = true;
-                
-                // NO BREAK; continue to the next move in LM
             }
             // else: temporarily invalid, "go to the next move"
         }
 
         // --- Check Iteration Outcome ---
-        if (applied_move_this_iteration) {
-            // One or more moves were applied. All other deltas in LM are now stale.
-            // Re-populate the entire list.
-            populate_LM(tour, d, nodes, is_selected, node_to_pos, LM);
-        }
-        else {
+        if (!applied_move_this_iteration) {
             // We went through the whole LM and applied nothing.
             // This means all remaining moves are temporarily invalid.
             // We have reached a local optimum.
